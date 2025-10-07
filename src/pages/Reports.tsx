@@ -152,23 +152,80 @@ const Reports = () => {
   const generateCSV = () => {
     if (sales.length === 0) return;
 
-    const rows = [
-      ['Tanggal', 'Kasir', 'Total', 'Metode Pembayaran', 'Jumlah Item'],
-      ...sales.map(sale => [
-        new Date(sale.created_at).toLocaleString('id-ID'),
-        sale.cashier?.full_name || sale.cashier?.username,
-        sale.total,
-        sale.payment_method,
-        (sale.sale_items || []).reduce((sum, item) => sum + Number(item.quantity), 0)
-      ])
+    // Add BOM for Excel to properly detect UTF-8
+    const BOM = '\uFEFF';
+    
+    // Format currency without currency symbol for Excel
+    const formatExcelCurrency = (amount) => {
+      return Number(amount).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    };
+
+    // Prepare header rows
+    const headerRows = [
+      [`Laporan Penjualan - ${selectedCashier === 'all' ? 'Semua Kasir' : cashiers.find(c => c.id === selectedCashier)?.name || 'Unknown'}`],
+      [`Periode: ${new Date().toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' })}`],
+      [], // Empty row for spacing
     ];
 
-    const csvContent = rows.map(row => row.join(',')).join('\\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    // Main data header
+    const dataHeader = [
+      ['No', 'Tanggal Transaksi', 'Waktu', 'Kasir', 'Total Transaksi', 'Metode Pembayaran', 'Jumlah Item', 'Detail Item']
+    ];
+
+    // Prepare detailed rows
+    const detailRows = sales.map((sale, index) => {
+      const date = new Date(sale.created_at);
+      const items = sale.sale_items || [];
+      const itemDetails = items.map(item => 
+        `${item.product?.name || 'Unknown'} (${item.quantity}x @${formatExcelCurrency(item.price_at_time)})`
+      ).join('; ');
+
+      return [
+        (index + 1).toString(),
+        date.toLocaleDateString('id-ID', { year: 'numeric', month: 'long', day: 'numeric' }),
+        date.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        sale.cashier?.full_name || sale.cashier?.username,
+        formatExcelCurrency(sale.total),
+        sale.payment_method,
+        items.reduce((sum, item) => sum + Number(item.quantity), 0),
+        itemDetails
+      ];
+    });
+
+    // Summary section
+    const summaryRows = [
+      [], // Empty row for spacing
+      ['Ringkasan:'],
+      ['Total Pendapatan', formatExcelCurrency(stats.totalRevenue)],
+      ['Total Transaksi', stats.totalTransactions],
+      ['Total Item Terjual', stats.totalItems],
+    ];
+
+    // Combine all rows
+    const allRows = [
+      ...headerRows,
+      ...dataHeader,
+      ...detailRows,
+      ...summaryRows
+    ];
+
+    // Convert to CSV content
+    const csvContent = BOM + allRows.map(row => 
+      row.map(cell => 
+        // Escape cells containing commas or quotes
+        /[,"]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell
+      ).join(',')
+    ).join('\n');
+
+    // Create and download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `laporan_penjualan_${new Date().toISOString().split('T')[0]}.csv`;
-    link.click();
+    const dateStr = new Date().toISOString().split('T')[0];
+    const cashierName = selectedCashier === 'all' ? 'semua-kasir' : 
+      cashiers.find(c => c.id === selectedCashier)?.name?.toLowerCase().replace(/\s+/g, '-') || 'unknown';
+    link.download = `laporan-penjualan_${cashierName}_${dateStr}.csv`;
+    link.click(); // Menambahkan ini untuk memulai download
   };
 
   return (
