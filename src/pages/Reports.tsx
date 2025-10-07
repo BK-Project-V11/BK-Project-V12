@@ -167,7 +167,7 @@ const Reports = () => {
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = \`laporan_penjualan_\${new Date().toISOString().split('T')[0]}.csv\`;
+    link.download = `laporan_penjualan_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
   };
 
