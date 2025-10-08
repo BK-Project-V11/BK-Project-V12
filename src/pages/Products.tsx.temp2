@@ -1,57 +1,9 @@
-import { useState, useEffect } from 'react';
-import { usePOS, Product } from '@/contexts/POSContext';
-import { useAuth } from '@/contexts/AuthContext';
-import { cn } from '@/lib/utils';
-import { supabase } from '@/lib/supabase';
-import { getProductStock } from '@/lib/api';
-import {
-  Minus,
-  Plus,
-  History,
-  Edit2,
-  Trash2,
-  Package,
-  Search,
-  AlertTriangle,
-} from 'lucide-react';
-import { StockAdjustmentDialog } from '@/components/StockAdjustmentDialog';
-import { StockHistoryDialog } from '@/components/StockHistoryDialog';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import type { ProductStock } from '@/types/stock';
-import ProductPermissions from '@/components/ProductPermissions';
-import { IconWrapper } from '@/components/ui/IconWrapper';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { ProductAllocationDialog } from '@/components/ProductAllocationDialog';
-import { 
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
-import { toast } from '@/hooks/use-toast';
+interface StockAdjustment {
+  type: 'increase' | 'decrease';
+  reason: string;
+  quantity: number;
+  note?: string;
+}
 
 const Products = () => {
   const posContext = usePOS();
@@ -59,7 +11,6 @@ const Products = () => {
   const { user } = useAuth();
   const isAdmin = user?.user_metadata?.role === 'admin';
   const [cashiers, setCashiers] = useState<Array<{ id: string; name: string }>>([]);
-  const [productStocks, setProductStocks] = useState<Record<string, ProductStock>>({});
 
   useEffect(() => {
     if (!user) {
@@ -71,25 +22,6 @@ const Products = () => {
       return;
     }
   }, [user]);
-
-  useEffect(() => {
-    const loadProductStocks = async () => {
-      const stocks: Record<string, ProductStock> = {};
-      for (const product of state.products) {
-        try {
-          const stockInfo = await getProductStock(product.id);
-          stocks[product.id] = stockInfo;
-        } catch (error) {
-          console.error(`Error loading stock for product ${product.id}:`, error);
-        }
-      }
-      setProductStocks(stocks);
-    };
-
-    if (state.products.length > 0) {
-      loadProductStocks();
-    }
-  }, [state.products]);
 
   useEffect(() => {
     const fetchCashiers = async () => {
@@ -120,6 +52,14 @@ const Products = () => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [isStockAdjustmentOpen, setIsStockAdjustmentOpen] = useState(false);
+  const [stockAdjustment, setStockAdjustment] = useState<StockAdjustment>({
+    type: 'increase',
+    reason: '',
+    quantity: 1,
+    note: ''
+  });
+  const [adjustingProduct, setAdjustingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState<Omit<Product, 'id'>>({
     name: '',
     sku: '',
@@ -163,8 +103,7 @@ const Products = () => {
       price: product.price,
       stock: product.stock,
       category: product.category,
-      description: product.description || '',
-      image: product.image
+      description: product.description || ''
     });
     setIsAddDialogOpen(true);
   };
@@ -212,20 +151,12 @@ const Products = () => {
         
         <div className="flex items-center gap-2">
           <ProductPermissions allowEdit={true}>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button className="bg-gradient-to-r from-primary to-primary/80">
-                  <IconWrapper icon={Plus} className="h-4 w-4 mr-2" />
-                  Tambah Produk
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Tambah Produk Baru</DialogTitle>
-                </DialogHeader>
-                {/* Form content will go here */}
-              </DialogContent>
-            </Dialog>
+            <DialogTrigger asChild>
+              <Button onClick={resetForm} className="bg-gradient-to-r from-primary to-primary/80">
+                <IconWrapper icon={Plus} className="h-4 w-4 mr-2" />
+                Tambah Produk (Legacy)
+              </Button>
+            </DialogTrigger>
           </ProductPermissions>
 
           <ProductPermissions allowEdit={true}>
@@ -242,8 +173,10 @@ const Products = () => {
                   .select('*');
                 
                 if (products) {
-                  // Update products in context
-                  updateProduct(products);
+                  posContext.dispatch({
+                    type: 'SET_PRODUCTS',
+                    payload: products
+                  });
                 }
               }}
               cashiers={cashiers}
@@ -288,38 +221,32 @@ const Products = () => {
                 </div>
                 <div className="flex items-center gap-2">
                   <ProductPermissions allowEdit={true}>
-                    <StockAdjustmentDialog 
-                      product={product} 
-                      onSuccess={async () => {
-                        const { data } = await supabase
-                          .from('products')
-                          .select('*')
-                          .eq('id', product.id)
-                          .single();
-                        
-                        if (data) {
-                          // Update product in context
-                          updateProduct(product.id, data);
-                        }
-                      }} 
-                    />
-                  </ProductPermissions>
+                    <div className="flex items-center gap-2">
+                      <StockAdjustmentDialog 
+                        product={product} 
+                        onSuccess={async () => {
+                          const { data: products } = await supabase
+                            .from('products')
+                            .select('*');
+                          
+                          if (products) {
+                            posContext.dispatch({
+                              type: 'SET_PRODUCTS',
+                              payload: products
+                            });
+                          }
+                        }} 
+                      />
+                      <StockHistoryDialog product={product} />
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleEdit(product)}
+                      >
+                        <IconWrapper icon={Edit2} className="h-4 w-4" />
+                      </Button>
+                    </div>
 
-                  <ProductPermissions allowEdit={true}>
-                    <StockHistoryDialog product={product} />
-                  </ProductPermissions>
-
-                  <ProductPermissions allowEdit={true}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleEdit(product)}
-                    >
-                      <IconWrapper icon={Edit2} className="h-4 w-4" />
-                    </Button>
-                  </ProductPermissions>
-
-                  <ProductPermissions allowEdit={true}>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
                         <Button
@@ -364,32 +291,12 @@ const Products = () => {
                     <Badge variant="secondary">{product.category}</Badge>
                   </div>
                   <div className="text-right">
-                    <Label>Total Stok</Label>
+                    <Label>Stok</Label>
                     <p className={`font-medium ${product.stock <= 10 ? 'text-red-500' : ''}`}>
                       {product.stock} unit
                     </p>
                   </div>
                 </div>
-                {isAdmin && productStocks[product.id] && (
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <Label>Storage</Label>
-                      <p className="font-medium">{productStocks[product.id].storage_stock} unit</p>
-                    </div>
-                    <div>
-                      <Label>Distribution</Label>
-                      <p className="font-medium">{productStocks[product.id].distribution_stock} unit</p>
-                    </div>
-                    <div>
-                      <Label>Returned</Label>
-                      <p className="font-medium">{productStocks[product.id].returned_stock} unit</p>
-                    </div>
-                    <div>
-                      <Label>Rejected</Label>
-                      <p className="font-medium">{productStocks[product.id].rejected_stock} unit</p>
-                    </div>
-                  </div>
-                )}
                 <div>
                   <Label>Harga</Label>
                   <p className="font-medium">

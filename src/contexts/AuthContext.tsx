@@ -28,6 +28,7 @@ interface AuthContextType {
     score: number;
     feedback: string[];
   };
+  updateUserRole: (userId: string, role: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);

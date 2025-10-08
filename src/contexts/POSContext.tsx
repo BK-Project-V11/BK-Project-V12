@@ -372,10 +372,18 @@ export const POSProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const updateProduct = async (id: string, product: Partial<Product>) => {
+    const updateProduct = async (id: string, updatedData: Partial<Product>) => {
     try {
-      const updatedProduct = await db.updateProduct(id, product);
-      dispatch({ type: 'UPDATE_PRODUCT', id, product: updatedProduct });
+      // Update in database first
+      await db.updateProduct(id, updatedData);
+      
+      // If database update succeeds, update local state
+      dispatch({
+        type: 'UPDATE_PRODUCT',
+        id,
+        product: updatedData
+      });
+
       toast({
         title: "Produk Diperbarui",
         description: "Data produk berhasil diperbarui",

@@ -1,0 +1,52 @@
+-- Hapus file sementara jika ada
+DROP TABLE IF EXISTS stock_adjustments;
+
+-- Buat tabel baru
+CREATE TABLE IF NOT EXISTS stock_adjustments (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    product_id UUID REFERENCES products(id) NOT NULL,
+    adjustment_type VARCHAR(20) CHECK (adjustment_type IN ('increase', 'decrease')) NOT NULL,
+    quantity INTEGER NOT NULL,
+    reason VARCHAR(50) NOT NULL,
+    condition VARCHAR(20) CHECK (condition IN ('good', 'damaged', 'expired')),
+    notes TEXT,
+    created_by UUID REFERENCES users(id),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- RLS Policies untuk stock_adjustments
+ALTER TABLE stock_adjustments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Admin dapat melihat semua penyesuaian stok" ON stock_adjustments
+FOR SELECT TO authenticated
+USING (auth.uid() IN (SELECT id FROM users WHERE role = 'admin'));
+
+CREATE POLICY "Admin dapat menambah penyesuaian stok" ON stock_adjustments
+FOR INSERT TO authenticated
+WITH CHECK (auth.uid() IN (SELECT id FROM users WHERE role = 'admin'));
+
+-- Fungsi untuk mengupdate stok saat ada penyesuaian
+CREATE OR REPLACE FUNCTION update_product_stock_on_adjustment()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.adjustment_type = 'increase' THEN
+        UPDATE products
+        SET stock = stock + NEW.quantity,
+            total_produced = total_produced + NEW.quantity
+        WHERE id = NEW.product_id;
+    ELSE
+        UPDATE products
+        SET stock = stock - NEW.quantity,
+            total_returned = total_returned + NEW.quantity
+        WHERE id = NEW.product_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger untuk penyesuaian stok
+CREATE TRIGGER trigger_update_stock_on_adjustment
+AFTER INSERT ON stock_adjustments
+FOR EACH ROW
+EXECUTE FUNCTION update_product_stock_on_adjustment();
